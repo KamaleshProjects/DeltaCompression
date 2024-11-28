@@ -77,6 +77,35 @@ def encode_var_len_int(value)
   return bytes
 end
 
+##
+# decodes the byte array passed according to the variable length encoding
+def decode_var_len_int(bytes)
+  value = 0
+  shift = 0
+
+  bytes.each_with_index do |byte, index|
+    
+    # get the last 7 bits (since 8th bit is continuation bit) 
+    # and left shift it to 7 times the current iter
+    last_7_bits_shifted = (byte & 0x7f) << shift
+
+    # append the partial value 
+    # b'00000001010100 | b'10101000000000 = b'10101001010100 
+    value |= last_7_bits_shifted
+    
+    # next 7 bits
+    shift += 7
+
+    if (byte & 0x80).zero? # if MSB not set, no continuation
+      negative = (value & 1) == 1 # remember we set the LSB as 1 if value was negative
+      value >>= 1
+      return negative ? -value : value
+    end
+  end
+
+  raise "Error: invalid variable length decoding bytes: #{bytes.inspect}"
+end
+
 ## Tests
 # to_delta
 
@@ -132,6 +161,30 @@ File.open("varint_delta.bin", "wb") do |file|
     file.write(encode_var_len_int(val).pack("C*")) # Pack bytes as unsigned chars
   end
 end
+
+# Read encoded delta series from file
+decoded_delta_arr = []
+
+File.open("varint_delta.bin", "rb") do |file|
+  buffer = []
+  
+  file.each_byte do |byte|
+    
+    # keep appending bytes to buffer until end of encoded integer 
+    buffer << byte
+    
+    if (byte & 0x80).zero? # End of one encoded integer when MSB is not set
+      decoded_delta_arr << decode_var_len_int(buffer)
+      buffer = [] # reset buffer
+    end
+  end
+
+end
+
+# time series conversion
+recon_time_series_int_arr = to_time_series(decoded_delta_arr) 
+
+puts "reconstructed time series data from delta compressed variable length encoded: #{recon_time_series_int_arr.inspect}"
 
 puts "Writes complete"
 
